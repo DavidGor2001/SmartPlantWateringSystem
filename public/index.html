@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arduino Web Interface</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .flex-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .data, .weather, .instructions {
+      flex: 1 1 calc(33.333% - 20px); 
+      min-width: 280px;
+      padding: 20px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background-color: #f9f9f9;
+    }
+    .weather-info p {
+      margin: 5px 0;
+    }
+    .instructions button {
+      margin-right: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .shelter-on {
+      background-color: rgb(145, 242, 145);
+      color: white;
+    }
+    .shelter-off {
+      background-color: rgb(253, 91, 91);
+      color: white;
+    }
+    .pump-available {
+      background-color: white;
+      color: rgb(59, 187, 230);
+      cursor: pointer;
+    }
+    .pump-cooldown {
+      background-color: rgb(59, 187, 230);
+      color: white;
+      cursor: not-allowed;
+    }
+    .weather {
+      margin: 20px 0;
+    }
+    select {
+      padding: 10px;
+      font-size: 16px;
+    }
+    #sensorChart {
+      max-width: 100%;
+      height: auto;
+    }
+    @media (max-width: 768px) {
+      .flex-container {
+        flex-direction: column; 
+      }
+
+      .data, .weather, .instructions {
+        flex: 1 1 100%; 
+      }
+
+      .instructions button {
+        margin-bottom: 10px;
+        width: 100%; 
+      }
+    }
+
+    @media (max-width: 480px) {
+      h1, h2 {
+        font-size: 20px;
+      }
+
+      .instructions button {
+        font-size: 14px;
+        padding: 8px 16px;
+      }
+    }
+    .charts {
+  margin-top: 20px;
+    }
+
+    canvas {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .threshold-update {
+  margin-top: 20px;
+}
+
+  #thresholdInput {
+    padding: 10px;
+    font-size: 16px;
+    width: calc(100% - 20px); 
+    max-width: 300px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+  }
+
+  #saveThresholdButton {
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: rgb(59, 187, 230);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+
+  #saveThresholdButton:hover {
+    background-color: rgb(45, 150, 185);
+  }
+
+  #saveThresholdButton:disabled {
+    background-color: rgb(200, 200, 200);
+    cursor: not-allowed;
+  }
+  #checkPlantThresholdButton {
+  padding: 10px 20px;
+  font-size: 16px;
+  background-color: rgb(255, 223, 100);
+  color: black;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 20px;
+  transition: background-color 0.3s ease;
+}
+
+  #checkPlantThresholdButton:hover {
+    background-color: rgb(240, 210, 90);
+  }
+
+  .dialog {
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background-color: #f9f9f9;
+    margin-top: 10px;
+  }
+
+  #plantImageInput {
+    margin-top: 10px;
+  }
+
+  #uploadPlantImageButton {
+    margin-top: 10px;
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: rgb(59, 187, 230);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  #uploadPlantImageButton:hover {
+    background-color: rgb(45, 150, 185);
+  }
+  #uploadPlantImageButton:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Arduino Web Interface</h1>
+
+    <div class="flex-container">
+      <!-- Current Data -->
+      <div class="data">
+        <h2>Current Data:</h2>
+        <p id="soilMoisture">Soil Moisture: --</p>
+        <p id="temperature">Temperature: --</p>
+      </div>
+
+      <!-- Weather Information -->
+      <div class="weather">
+        <h2>Weather Information:</h2>
+        <label for="locationSelect">Location:</label>
+        <select id="locationSelect" onchange="updateWeather()">
+          <option id="location" value="" disabled selected>Select a location</option>
+        </select>
+        <div class="weather-info">
+          <p id="weatherTemperature">Temperature: --</p>
+          <p id="weatherHumidity">Humidity: --</p>
+          <p id="weatherRainfall">Rainfall: --</p>
+        </div>
+      </div>
+
+      <!-- Instructions -->
+      <div class="instructions">
+        <button id="checkPlantThresholdButton" onclick="openPlantThresholdDialog()">
+          💡 Check the proper threshold for your plant
+        </button>
+        <div id="plantThresholdDialog" class="dialog" style="display: none; position: relative;">
+          <button 
+          id="closeDialogButton" 
+          onclick="closePlantThresholdDialog()" 
+          style="
+            position: absolute; 
+            top: 10px; 
+            right: 10px; 
+            background: none; 
+            border: none; 
+            font-size: 20px; 
+            cursor: pointer;">
+          ✖
+        </button>
+          <h3>Upload an Image of Your Plant:</h3>
+          <input type="file" id="plantImageInput" accept="image/*" />
+          <button id="uploadPlantImageButton" onclick="uploadPlantImage()">Upload</button>
+          <p id="plantNameMessage" style="color: green; display: none;">Plant name: --</p>
+        </div>
+        <input type="number" id="thresholdInput" placeholder="Enter a positive number between 0 to 1000." />
+        <button id="saveThresholdButton" onclick="saveThreshold()">Save Threshold</button>
+        <p id="thresholdMessage" style="color: green; display: none;">Threshold updated successfully!</p>
+
+        <h2>Send Instruction:</h2>
+        <button id="shelterButton" class="shelter-off" onclick="toggleShelter()">Shelter Off</button>
+        <button id="pumpButton" class="pump-available" onclick="pumpWater()">Pump a Bit Water</button>
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div class="charts">
+      <h2>Soil Moisture Chart</h2>
+      <canvas id="soilMoistureChart"></canvas>
+    
+      <h2>Temperature Chart</h2>
+      <canvas id="temperatureChart"></canvas>
+    </div>
+  </div>
+  <script>
+    const socket = io();
+    let isShelterOn = false;
+    let pumpAvailable = true;
+    let firstLocationFlag = true;
+    const weatherAPI = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=en";
+
+    // Fetch the selected location when loading the page
+    fetch('/get-location')
+      .then((response) => response.json())
+      .then((data) => {
+        console.log('get location', data.location);
+        if (data.location != null){
+        document.getElementById('locationSelect').value = data.location;}
+        updateWeather();
+      })
+      .catch((error) => {
+        console.error('Error fetching shelter status:', error);
+      });
+
+    // Fetch the initial shelter status when loading the page
+    fetch('/get-shelter-status')
+      .then((response) => response.json())
+      .then((data) => {
+        isShelterOn = data.shelter;
+        updateShelterButton();
+      })
+      .catch((error) => {
+        console.error('Error fetching shelter status:', error);
+      });
+
+    // Fetch the initial pump status when loading the page
+    fetch('/get-pump-status')
+      .then((response) => response.json())
+      .then((data) => {
+        pumpAvailable = data.pump === 0; // Pump is available if status is 0
+        updatePumpButton();
+      })
+      .catch((error) => {
+        console.error('Error fetching pump status:', error);
+      });
+
+    // Update data in real-time
+    socket.on('update-data', (data) => {
+      updateSensorData(data);
+    });
+
+    // Update shelter button state in real-time
+    socket.on('shelter-status', (status) => {
+      isShelterOn = status;
+      updateShelterButton();
+    });
+
+    // Update pump button state in real-time
+    socket.on('pump-status', (status) => {
+      pumpAvailable = !status; // Pump is available when status is false (0)
+      updatePumpButton();
+    });
+    // Fetch the latest sensor data and update the UI
+    async function fetchLatestSensorData() {
+      try {
+        const response = await fetch('/get-all-sensor-data');
+        const data = await response.json();
+        if (data.length > 0) {
+          const latestData = data[data.length - 1]; // Get the last row
+          console.log("latest", latestData);
+          updateSensorData(latestData);
+        }
+      } catch (error) {
+        console.error('Error fetching sensor data:', error);
+      }
+    }
+    //Update the UI
+    function updateSensorData(data) {
+      console.log("received data", data);
+      if (data.soil_moisture == null || data.temperature == null){
+        return ;
+      }
+      const soilMoisture = data.soil_moisture;
+      const temperature = data.temperature;
+
+      // Determine soil moisture description
+      let moistureDescription = '';
+      if (soilMoisture > 520) {
+        moistureDescription = '(Very Dry)';
+      } else if (soilMoisture > 430 && soilMoisture <= 520) {
+        moistureDescription = '(Dry)';
+      } else if (soilMoisture > 350 && soilMoisture <= 430) {
+        moistureDescription = '(Wet)';
+      } else if (soilMoisture > 260 && soilMoisture <= 350) {
+        moistureDescription = '(Very Wet)';
+      }
+
+      document.getElementById('soilMoisture').innerText = `Soil Moisture: ${soilMoisture} ${moistureDescription}`;
+      document.getElementById('temperature').innerText = `Temperature: ${temperature} °C`;
+    }
+
+    function updateShelterButton() {
+      const shelterButton = document.getElementById('shelterButton');
+      if (isShelterOn) {
+        shelterButton.innerText = 'Shelter On';
+        shelterButton.className = 'shelter-on';
+      } else {
+        shelterButton.innerText = 'Shelter Off';
+        shelterButton.className = 'shelter-off';
+      }
+    }
+
+    // Toggle shelter status
+    function toggleShelter() {
+      const instruction = isShelterOn ? 'Shelter off' : 'Shelter on';
+      fetch('/shelter-instruction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      }).catch((error) => alert('Failed to send instruction.'));
+    }
+  
+    function updatePumpButton() {
+      const pumpButton = document.getElementById('pumpButton');
+      if (pumpAvailable) {
+        pumpButton.disabled = false;
+        pumpButton.className = 'pump-available';
+        pumpButton.innerText = 'Pump a Bit Water';
+      } else {
+        pumpButton.disabled = true;
+        pumpButton.className = 'pump-cooldown';
+        pumpButton.innerText = 'Pumping...';
+      }
+    }
+
+
+    // Pump water
+    function pumpWater() {
+      // Disable the button immediately
+      const pumpButton = document.getElementById('pumpButton');
+      pumpButton.disabled = true;
+      pumpButton.className = 'pump-cooldown';
+      pumpButton.innerText = 'Pumping...';
+
+      // Send pump instruction to the server to change the pump flag = 1 in database
+      fetch('/pump-instruction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction: 'Pump a bit water' }),
+      }).catch((error) => alert('Failed to send instruction.'));
+    }
+
+    async function fetchSensorData() {
+      try {
+        const response = await fetch('/get-all-sensor-data');
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('Error fetching sensor data:', error);
+      }
+    }
+    async function prepareGraphData() {
+      const sensorData = await fetchSensorData();
+      const timestamps = sensorData.map((entry) => new Date(entry.timestamp).toLocaleString());
+      const soilMoisture = sensorData.map((entry) => entry.soil_moisture);
+      const temperature = sensorData.map((entry) => entry.temperature);
+
+      return { timestamps, soilMoisture, temperature };
+    }
+
+        async function drawGraphs() {
+          const { timestamps, soilMoisture, temperature } = await prepareGraphData();
+
+          const soilMoistureCtx = document.getElementById('soilMoistureChart').getContext('2d');
+          new Chart(soilMoistureCtx, {
+            type: 'line',
+            data: {
+              labels: timestamps,
+              datasets: [
+                {
+                  label: 'Soil Moisture',
+                  data: soilMoisture,
+                  borderColor: 'blue',
+                  fill: false,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              scales: {
+                x: {
+                  title: {
+                    display: true,
+                    text: 'Timestamp',
+                  },
+                  ticks: {
+                    maxTicksLimit: 6,
+                  },
+                },
+                y: {
+                  title: {
+                    display: true,
+                    text: 'Soil Moisture',
+                  },
+                  ticks: {
+                    maxTicksLimit: 5,
+                  },
+                },
+              },
+            },
+          });
+
+          const temperatureCtx = document.getElementById('temperatureChart').getContext('2d');
+          new Chart(temperatureCtx, {
+            type: 'line',
+            data: {
+              labels: timestamps,
+              datasets: [
+                {
+                  label: 'Temperature (°C)',
+                  data: temperature,
+                  borderColor: 'red',
+                  fill: false,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              scales: {
+                x: {
+                  title: {
+                    display: true,
+                    text: 'Timestamp',
+                  },
+                  ticks: {
+                    maxTicksLimit: 6,
+                  },
+                },
+                y: {
+                  title: {
+                    display: true,
+                    text: 'Temperature (°C)',
+                  },
+                  ticks: {
+                    maxTicksLimit: 5,
+                  },
+                },
+              },
+            },
+          });
+        }
+
+    async function fetchWeatherData() {
+      try {
+        const response = await fetch(weatherAPI);
+        const data = await response.json();
+        console.log("Featched weather data", data);
+        return data;
+      } catch (error) {
+        console.error("Error fetching weather data:", error);
+      }
+    }
+    async function populateLocationDropdown() {
+      const weatherData = await fetchWeatherData();
+      const rainfallData = weatherData.rainfall.data;
+
+      const locationSelect = document.getElementById("locationSelect");
+
+      rainfallData.forEach(rainfall => {
+        const option = document.createElement("option");
+        option.value = rainfall.place;
+        option.textContent = rainfall.place;
+        locationSelect.appendChild(option);
+      });
+    }
+
+    async function updateWeather() {
+      const selectedLocation = document.getElementById("locationSelect").value;
+      // Post the selected location to the database
+      if (firstLocationFlag == true){
+        firstLocationFlag = false;
+      } else{
+        try {
+          const response = await fetch('/update-location', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ location: selectedLocation }),
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to update location in the database');
+          }
+          console.log('Location updated successfully in the database');
+        } catch (error) {
+          console.error('Error posting the selected location:', error);
+        }
+      }
+
+      const weatherData = await fetchWeatherData();
+      const rainfallData = weatherData.rainfall.data.find(r => r.place == selectedLocation);
+      const humidityData = weatherData.humidity.data.find(h => h.place == "Hong Kong Observatory"); // Always use Hong Kong Observatory's humidity
+
+      let temperaturePlace = null;
+      if (selectedLocation == "Central & Western District") {
+        temperaturePlace = "Hong Kong Park";
+      } else if (selectedLocation == "Eastern District") {
+        temperaturePlace = "Shau Kei Wan";
+      } else if (selectedLocation == "Kwai Tsing") {
+        temperaturePlace = "Tsing Yi";
+      } else if (selectedLocation == "Islands District") {
+        temperaturePlace = "Cheung Chau";
+      } else if (selectedLocation == "North District") {
+        temperaturePlace = "Ta Kwu Ling";
+      } else if (selectedLocation == "Sai Kung") {
+        temperaturePlace = "Sai Kung";
+      } else if (selectedLocation == "Sha Tin") {
+        temperaturePlace = "Sha Tin";
+      } else if (selectedLocation == "Southern District") {
+        temperaturePlace = "Stanley";
+      } else if (selectedLocation == "Tai Po") {
+        temperaturePlace = "Tai Po";
+      } else if (selectedLocation == "Tsuen Wan") {
+        temperaturePlace = "Tsuen Wan Shing Mun Valley";
+      } else if (selectedLocation == "Tuen Mun") {
+        temperaturePlace = "Tuen Mun";
+      } else if (selectedLocation == "Wan Chai") {
+        temperaturePlace = "Happy Valley";
+      } else if (selectedLocation == "Yuen Long") {
+        temperaturePlace = "Yuen Long Park";
+      } else if (selectedLocation == "Yau Tsim Mong") {
+        temperaturePlace = "King's Park";
+      } else if (selectedLocation == "Sham Shui Po") {
+        temperaturePlace = "Sham Shui Po";
+      } else if (selectedLocation == "Kowloon City") {
+        temperaturePlace = "Kowloon City";
+      } else if (selectedLocation == "Wong Tai Sin") {
+        temperaturePlace = "Wong Tai Sin";
+      } else if (selectedLocation == "Kwun Tong") {
+        temperaturePlace = "Kwun Tong";
+      }
+
+      // Find the temperature data for the mapped temperature place
+      const temperatureData = weatherData.temperature.data.find(t => t.place == temperaturePlace);
+
+      // Update the weather information in the UI
+      document.getElementById("weatherTemperature").textContent =
+        temperatureData ? `Temperature: ${temperatureData.value}°C` : "Temperature: No data available";
+      document.getElementById("weatherHumidity").textContent =
+        humidityData ? `Humidity: ${humidityData.value}%` : "Humidity: No data available";
+      document.getElementById("weatherRainfall").textContent =
+        rainfallData ? `Rainfall: ${rainfallData.max} mm` : "Rainfall: No data available";
+    }
+
+    async function saveThreshold() {
+      const thresholdInput = document.getElementById("thresholdInput");
+      const thresholdMessage = document.getElementById("thresholdMessage");
+
+      const moistureThreshold = parseInt(thresholdInput.value);
+
+      if (isNaN(moistureThreshold) || moistureThreshold <= 0) {
+        alert("Please enter a positive number for the threshold.");
+        return;
+      }
+
+  try {
+    // Send the new threshold to the backend
+    const response = await fetch('/update-threshold', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ moisture_threshold: moistureThreshold }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to update the threshold in the database.");
+    }
+
+    // Show the message
+    thresholdMessage.style.display = "block";
+    thresholdMessage.textContent = "Threshold updated successfully!";
+    thresholdInput.value = "";
+
+    // After 3 seconds, hide the message
+    setTimeout(() => {
+      thresholdMessage.style.display = "none";
+    }, 3000);
+  } catch (error) {
+    console.error("Error updating the threshold:", error);
+    alert("Failed to update the threshold. Please try again.");
+  }
+}
+// Fetch the old threshold value from the backend and set it as the placeholder
+async function fetchOldThreshold() {
+  try {
+    const response = await fetch('/get-threshold');
+    const data = await response.json();
+    const oldThreshold = data.moisture_threshold || 0;
+    document.getElementById('thresholdInput').value = oldThreshold;
+  } catch (error) {
+    console.error('Error fetching old threshold:', error);
+    alert('Failed to fetch the old threshold.');
+  }
+}
+
+function openPlantThresholdDialog() {
+  const dialog = document.getElementById('plantThresholdDialog');
+  dialog.style.display = 'block';
+}
+function closePlantThresholdDialog() {
+  const dialog = document.getElementById('plantThresholdDialog');
+  dialog.style.display = 'none';
+}
+// Send the plant image to the backend
+let isUploading = false;
+async function uploadPlantImage() {
+  const plantImageInput = document.getElementById('plantImageInput');
+  const plantNameMessage = document.getElementById('plantNameMessage');
+
+  const uploadButton = document.getElementById('uploadPlantImageButton');
+
+  if (isUploading) {
+    return; 
+  }
+
+  if (!plantImageInput.files.length) {
+    alert('Please select an image to upload.');
+    return;
+  }
+
+  isUploading = true;
+  uploadButton.disabled = true;
+  let timeLeft = 10;
+  const originalButtonText = uploadButton.textContent;
+
+  const countdownInterval = setInterval(() => {
+    uploadButton.textContent = `Wait (${timeLeft}s)`;
+    timeLeft--;
+    
+    if (timeLeft < 0) {
+      clearInterval(countdownInterval);
+      uploadButton.textContent = originalButtonText;
+      uploadButton.disabled = false;
+      isUploading = false;
+    }
+  }, 1000);
+
+  const formData = new FormData();
+  formData.append('image', plantImageInput.files[0]);
+
+  try {
+    const response = await fetch('/analyze-plant', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to analyze the plant image.');
+    }
+
+    const data = await response.json();
+    const plantName = data.plant_name || 'Unknown Plant';
+
+
+    plantNameMessage.style.display = 'block';
+    plantNameMessage.textContent = `Plant name: ${plantName}`;
+  } catch (error) {
+    console.error('Error analyzing plant image:', error);
+    alert('Failed to analyze the plant image. Please try again.');
+  }
+}
+
+    fetchOldThreshold();
+    fetchLatestSensorData();
+    drawGraphs();
+    populateLocationDropdown();
+  </script>
+</body>
+</html>
